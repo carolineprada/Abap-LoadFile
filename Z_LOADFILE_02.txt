@@ -1,0 +1,313 @@
+*&---------------------------------------------------------------------*
+*& Report Z_LOADFILE_02
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT Z_LOADFILE_02.
+
+*@CPRADA 17.09.19
+*@CPRADA 25.09.19 (Ajustes)
+***Se ingresa código de Custom Container
+
+*&---------------------------------------------------------------------*
+* Este programa carga los datos en cualquier Tabla especificados en la *
+* pantalla de selección.                                               *
+* El Archivo debe ser txt, delimitado por TAB y el orden de los campos *
+* Se pueden cargar archivos txt, csv, con delimitador indiferente      *
+*&---------------------------------------------------------------------*
+
+*&----------------------------------------------------------------------*
+*& Se debe tener en cuenta que el orden de los campos del archivo       *
+*& debe ser igual a como se encuentran en la tabla Z                    *
+*& IMPORTANTE:                                                          *
+*& 1. Fechas sin punto (yyyymmdd)                                       *
+*& 2. NO ES NECESARIO INCLUIR EL MANDANTE, COMO EN TIEMPO PASADO        *
+*&----------------------------------------------------------------------*
+
+
+*Se llaman las Tablas para tomar la Estructura
+TABLES: dd03l.
+
+*VARIABLES DE COMPOSICIÓN DEL CONTENEDOR
+DATA: l_table TYPE REF TO   data,                                                "VARIABLE QUE CONTENDRÁ LA TABLA
+      oref    TYPE REF TO   cl_gui_docking_container,                            "ALMACENAR EL PROGRAMA E INVOCAR LA DYNPRO
+      aref    TYPE REF TO   cl_gui_alv_grid,                                     "MOSTRAR LOS DATOS DE LA VARIABLE ANTERIOR
+      clik    TYPE TABLE OF syucomm.
+
+DATA: fields_itab      LIKE dd03l OCCURS  200000 WITH HEADER LINE,
+      data_itab(20000) TYPE c OCCURS 200000      WITH HEADER LINE,
+      i_tmp(100)       OCCURS 200000             WITH HEADER LINE.
+
+
+
+*CAMPOS ESPECIALES, REEMPLAZADOS POR LAS VARIABLES DECLARAS
+FIELD-SYMBOLS: <t>,                                                               "ALMACENARÁ LA TABLA
+               <fd>.                                                              "ALMACENARÁ LA ESTRUCTURA
+
+
+*PARÁMETRO QUE TRAE LA TABLA
+SELECTION-SCREEN BEGIN OF BLOCK b01 WITH FRAME TITLE TEXT-b01.
+PARAMETERS : p_table LIKE dd03l-tabname OBLIGATORY.
+SELECTION-SCREEN END OF BLOCK b01.
+
+
+"Bloque de: Selección Tabla Z y Carga de Archivo
+SELECTION-SCREEN BEGIN OF BLOCK b02 WITH FRAME TITLE TEXT-b02.
+PARAMETERS : p_file TYPE rlgrap-filename.                                           "ARCHIVO
+PARAMETERS : delim TYPE c .                                                         "DELIMITADOR
+PARAMETERS : p_head AS CHECKBOX DEFAULT 'X'.                                        "INDICADOR DE CABECERA
+SELECTION-SCREEN END OF BLOCK b02.
+
+
+
+*--------------------------------------------------------------------- INICIO DE SALIDA EN PANTALLA --------------------------------------------------------*
+
+AT SELECTION-SCREEN OUTPUT.
+
+  REFRESH clik.
+
+*  APPEND 'ONLI' TO CLIK.
+*  APPEND 'SJOB' TO CLIK.
+  APPEND 'PRIN' TO clik.
+
+*SECCIÓN QUE LLAMA EL ARCHIVO
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  CALL FUNCTION 'WS_FILENAME_GET'
+    EXPORTING
+      mask             = ',*.*,*.*.'
+    IMPORTING
+      filename         = p_file
+    EXCEPTIONS
+      inv_winsys       = 1
+      no_batch         = 2
+      selection_cancel = 3
+      selection_error  = 4
+      OTHERS           = 5.
+
+
+
+*VALIDACIÓN DEL TIPO DE TABLA
+
+AT SELECTION-SCREEN.
+
+
+
+  refresh fields_itab.
+  SELECT  * FROM  dd03l WHERE  tabname     = p_table
+    AND    as4local    = 'A'.
+    IF dd03l-fieldname NE '.INCLUDE  '.
+      MOVE dd03l TO fields_itab.
+      APPEND fields_itab.
+    ENDIF.
+  ENDSELECT.
+  IF sy-subrc NE 0.
+    MESSAGE 'Tabla especificada no existe' TYPE 'E'.
+  ENDIF.
+
+  IF NOT p_table CP 'Z*' AND NOT p_table CP 'Y*'.
+    MESSAGE 'No se permiten tablas de sistema' TYPE 'E'.
+  ENDIF.
+
+*----------------------------------------------------- PROGRAMA QUE MUESTRA LA GRILLA ----------------------------------------------------------------------*
+
+
+  IF p_table IS NOT INITIAL.
+
+*    IF oref is NOT INITIAL.
+*     LEAVE TO SCREEN '1000'.
+*    ENDIF.
+
+    CLEAR l_table.
+    UNASSIGN <t>.
+
+    CREATE DATA l_table TYPE STANDARD TABLE OF (p_table) WITH NON-UNIQUE DEFAULT KEY.
+    ASSIGN l_table->* TO <t>.
+    IF sy-subrc EQ 0.
+    ENDIF.
+
+    CLEAR oref.
+*SELECCIONAN LOS ELEMENTOS DE LA TABLA QUE INGRESA COMO PARÁMETRO
+    CREATE OBJECT oref
+      EXPORTING
+        dynnr                       = '1000'                                            "NÚMERO UBICACIÓN DE LA DYNPRO
+        repid                       = sy-repid                                          "LLAMANDO AL PROGRAMA
+        side                        = cl_gui_docking_container=>dock_at_bottom          "FUNCIÓN ESTANDAR DEL CONTAINER DE DYNPRO
+        ratio                       = 80                                                "TAMAÑO DE LA DYNPRO
+      EXCEPTIONS
+        cntl_error                  = 1                                                 "MENSAJES DE ERROR
+        cntl_system_error           = 2
+        create_error                = 3
+        lifetime_error              = 4
+        lifetime_dynpro_dynpro_link = 5
+        OTHERS                      = 6.
+
+    IF sy-subrc EQ 0.
+    ENDIF.
+
+
+    CLEAR aref.
+
+*SE CREA OBJETO QUE CONTIENE LOS DATOS DEL OBJETO ANTERIO <OREF>
+    CREATE OBJECT aref
+      EXPORTING
+        i_parent          = oref
+      EXCEPTIONS
+        error_cntl_create = 1
+        error_cntl_init   = 2
+        error_cntl_link   = 3
+        error_dp_create   = 4
+        OTHERS            = 5.
+    IF sy-subrc EQ 0.
+
+    ENDIF.
+
+
+*SE CREA MÉTODO QUE LLAMA LA ESTRUCTURA DE REFERENCIA DEL DICCIONARIO DE DATOS
+    CALL METHOD aref->set_table_for_first_display
+      EXPORTING
+        i_structure_name              = p_table
+      CHANGING
+        it_outtab                     = <t>
+      EXCEPTIONS
+        invalid_parameter_combination = 1
+        program_error                 = 2
+        too_many_lines                = 3
+        OTHERS                        = 4.
+
+    IF sy-subrc EQ 0.
+
+    ENDIF.
+
+*    CLEAR p_table.
+
+    CALL METHOD aref->refresh_table_display
+      EXCEPTIONS
+        finished = 1
+        OTHERS   = 2.
+    IF sy-subrc EQ 0.
+    ENDIF.
+
+    IF aref IS NOT INITIAL.
+      CLEAR aref.
+    ENDIF.
+
+  ENDIF.
+
+
+
+
+
+
+START-OF-SELECTION.
+
+
+*Se invocan las Subrutinas, Abre el Documento, Tabla Dinámica
+  PERFORM f_open_file.
+  PERFORM f_dynamic_table_load.
+
+
+*---------------------------------------------------------------------*
+*       FORM f_open_file                                              *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+
+*Inicio de la Subrutina
+FORM f_open_file.
+  REFRESH data_itab.
+  IF p_file IS NOT INITIAL.
+    CALL FUNCTION 'WS_UPLOAD'                       "Carga los Datos de un Fichero SAP
+      EXPORTING
+        filename            = p_file
+        filetype            = 'ASC'
+      TABLES
+        data_tab            = data_itab
+      EXCEPTIONS
+        conversion_error    = 1
+        file_open_error     = 2
+        file_read_error     = 3
+        invalid_table_width = 4
+        invalid_type        = 5
+        no_batch            = 6
+        unknown_error       = 7
+        OTHERS              = 8.
+    IF sy-subrc NE 0.
+      WRITE : ' Error al Abrir el Archivo : ' , p_file.
+      STOP.
+    ELSE.
+      "eliminar cabecera
+      IF p_head = 'X'.
+        DELETE data_itab INDEX 1.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+
+
+
+*---------------------------------------------------------------------*
+*       FORM f_dynamic_table_load                                     *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+
+*Inicio de la Subrutina
+FORM f_dynamic_table_load.
+  DATA lv_index TYPE sy-index.
+
+  CREATE DATA l_table TYPE (p_table).                        "Objeto de datos de tabla, que guarda el parámetro tabla (P_TABLE)
+
+  ASSIGN l_table->* TO <t>.                                    "Asigna la referencia al campo Símbolo
+
+*Array de Almacenamiento Datos Separados
+  LOOP AT data_itab.
+    REFRESH i_tmp.
+
+*Inicio de la División de la Tabla
+    SPLIT data_itab  AT delim INTO TABLE i_tmp.              "Divide el Archivo y lo Separa por Delimitador
+    CLEAR <t>.                                               "Limpiar datos Almacenados
+
+    CLEAR lv_index.
+    LOOP AT fields_itab WHERE rollname <> 'MANDT'.           "Carga todo los datos de la tabla, Menos el Mandante
+      ADD 1 TO lv_index.
+
+      ASSIGN COMPONENT fields_itab-fieldname OF STRUCTURE <t> TO <fd>.
+      IF sy-subrc NE 0.
+        EXIT.
+      ENDIF.
+      READ TABLE i_tmp  INDEX lv_index..
+      IF sy-subrc EQ 0.
+        <fd>  = i_tmp.
+      ENDIF.
+    ENDLOOP.
+
+    MODIFY (p_table) FROM <t>.                                 "MODIFICA LOS CAMPOS
+  ENDLOOP.
+
+
+  CLEAR sy-tfill.                                               "Limpia los Datos
+    IF SY-SUBRC EQ 0.
+
+    DESCRIBE TABLE data_itab LINES sy-tfill.                                         "Almacena la Cantidad de Entradas en la Tabla
+    WRITE :/ 'Numero total de registros de la Tabla', p_table ,' son: ', sy-tfill.   "Imprime el Mensaje y Muestra la Cantidad de Entradas
+    ULINE.
+
+
+*      DESCRIBE TABLE data_itab LINES sy-tfill.                                      "Almacena la Cantidad de Entradas en la Tabla
+*      MESSAGE 'Archivo Cargado con Éxito' TYPE 'I'.
+      ELSE.
+      MESSAGE 'Error al Cargar el Archivo' TYPE 'E'.
+
+    ENDIF.
+
+    LEAVE TO TRANSACTION 'Z_BIPRUEBA'.
+
+
+ENDFORM.
+
+*PERFORM mostrar_alv USING p_table.
+*
+*
+*ENDFORM.

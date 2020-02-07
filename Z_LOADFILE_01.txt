@@ -1,0 +1,361 @@
+*&---------------------------------------------------------------------*
+*& Report Z_LOADFILE_01
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT Z_LOADFILE_01.
+
+*//@CPRADA 17.09.19
+*@CPRADA 25.09.19 (Ajustes)
+***Se ingresa código de Custom Container
+
+*&---------------------------------------------------------------------*
+* Este programa carga los datos en cualquier Tabla especificados en la *
+* pantalla de selección.                                               *
+* El Archivo debe ser txt, delimitado por TAB y el orden de los campos *
+* Se pueden cargar archivos txt, csv, con delimitador indiferente      *
+*&---------------------------------------------------------------------*
+
+*&----------------------------------------------------------------------*
+*& Se debe tener en cuenta que el orden de los campos del archivo       *
+*& debe ser igual a como se encuentran en la tabla Z                    *
+*& IMPORTANTE:                                                          *
+*& 1. Fechas sin punto (yyyymmdd)                                       *
+*& 2. Valores en pesos Sin Punto Ni Comas                               *
+*& 3. Se debe ingresar el Mandante como primera columna                 *
+*&----------------------------------------------------------------------*
+
+*Tabla de Campos                                                        *
+TABLES: DD03L.
+TABLES: ZCDSPRG01.
+
+
+*--------------------------------------------------------------- INICIO DE SELECCIÓN POR LISTBOX -----------------------------------------------------------*
+
+
+*TIPO DE DATOS QUE SE REQUIERE PARA EL USO DE LA FUNCIÓN VRM
+TYPE-POOLS: VRM.
+
+
+*DECLARACIÓN DE TIPOS, VIENEN DE FORMA DIRECTA DE LA TABLA
+TYPES: BEGIN OF T_ACC,
+         ID         TYPE ZCDSPRG01-UNAME,
+         VIEW_TABLE TYPE ZCDSPRG01-VIEW_TABLE,
+       END   OF T_ACC.
+
+
+*DECLARACIÓN DE VARIABLES VALIDACIÓN LISTBOX
+DATA: IT_ACCES         TYPE STANDARD TABLE OF T_ACC,
+      WA_ACCES         LIKE LINE OF IT_ACCES,
+      DREF             TYPE REF TO DATA,
+      FIELDS_ITAB      LIKE DD03L OCCURS  200000 WITH HEADER LINE,
+      DATA_ITAB(20000) TYPE C OCCURS 200000 WITH HEADER LINE,
+      I_TMP(100) OCCURS 200000 WITH HEADER LINE.
+
+*DECLARACIÓN VARIABLES LISTBOX
+DATA: G_ID      TYPE VRM_ID,
+      IT_VALUES TYPE VRM_VALUES,
+      WA_VALUES LIKE LINE OF IT_VALUES.
+
+
+*VARIABLES DE COMPOSICIÓN DEL CONTENEDOR
+DATA: L_TABLE TYPE REF TO   DATA,                                                "VARIABLE QUE CONTENDRÁ LA TABLA
+      OREF    TYPE REF TO   CL_GUI_DOCKING_CONTAINER,                            "ALMACENAR EL PROGRAMA E INVOCAR LA DYNPRO
+      AREF    TYPE REF TO   CL_GUI_ALV_GRID,                                     "MOSTRAR LOS DATOS DE LA VARIABLE ANTERIOR
+      CLIK    TYPE TABLE OF SYUCOMM.
+
+
+*CAMPOS ESPECIALES, REEMPLAZADOS POR LAS VARIABLES DECLARAS
+FIELD-SYMBOLS: <T>,                                                               "ALMACENARÁ LA TABLA
+               <FD>.                                                              "ALMACENARÁ LA ESTRUCTURA
+
+
+*-----------------------------------------------------------------------------------------------------------------------------------------------------------*
+
+SELECTION-SCREEN BEGIN OF BLOCK B01 WITH FRAME TITLE TEXT-B01.
+PARAMETERS: P_TABLE LIKE DD03L-TABNAME OBLIGATORY AS LISTBOX VISIBLE LENGTH 40.
+SELECTION-SCREEN END OF BLOCK B01.
+
+SELECTION-SCREEN BEGIN OF BLOCK B02 WITH FRAME TITLE TEXT-B02.
+  PARAMETERS : P_FILE  TYPE RLGRAP-FILENAME .                                     "ARCHIVO
+  PARAMETERS : DELIM   TYPE C.                                                    "DELIMITADOR
+  PARAMETERS : P_HEAD AS CHECKBOX DEFAULT 'X'.                                    "INDICADOR DE CABECERA
+SELECTION-SCREEN END OF BLOCK B02.
+
+
+
+*INICIO PANTALLA DE SALIDA
+AT SELECTION-SCREEN OUTPUT.
+
+  REFRESH clik.
+
+*  APPEND 'ONLI' TO CLIK.
+*  APPEND 'SJOB' TO CLIK.
+  APPEND 'PRIN' TO clik.
+
+  SELECT UNAME, NAME_REPORT FROM ZCDSPRG01
+    INTO TABLE @IT_ACCES
+    WHERE UNAME = @SY-UNAME.
+
+*ARRAY, QUE MUESTRA DATOS DE LA TABLA DE ACCESO A LOS REPORTES
+  LOOP AT IT_ACCES INTO WA_ACCES.
+
+    WA_VALUES-KEY  = WA_ACCES-VIEW_TABLE.
+    WA_VALUES-TEXT = WA_ACCES-VIEW_TABLE.
+    APPEND WA_VALUES TO IT_VALUES.
+    CLEAR WA_VALUES.
+
+  ENDLOOP.
+
+*LLAMA LA FUNCIÓN VRM (LISTBOX)
+  G_ID = 'P_TABLE'.
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      ID     = G_ID
+      VALUES = IT_VALUES.
+
+
+
+*START-OF-SELECTION.
+*----------------------------------------------------------------- FIN DE SELECCIÓN POR LISTBOX ------------------------------------------------------------*
+
+*---------- Bloque de: Selección Tabla Z y Carga de Archivo -------------*
+
+*Sección Llamar el Archivo
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR P_FILE.
+  CALL FUNCTION 'WS_FILENAME_GET'
+  "Método de llamada de Archivo
+    EXPORTING
+      MASK             = ',*.*,*.*.'
+    IMPORTING
+      FILENAME         = P_FILE
+    EXCEPTIONS
+      INV_WINSYS       = 1
+      NO_BATCH         = 2
+      SELECTION_CANCEL = 3
+      SELECTION_ERROR  = 4
+      OTHERS           = 5.
+
+
+*INICIO EJECUCIÓN PROGRAMA
+AT SELECTION-SCREEN.
+
+
+  REFRESH FIELDS_ITAB.
+  SELECT  * FROM  DD03L
+            WHERE  TABNAME     = P_TABLE
+            AND    AS4LOCAL    = 'A'.
+    IF DD03L-FIELDNAME NE '.INCLUDE  '.
+      MOVE DD03L TO FIELDS_ITAB.
+      APPEND FIELDS_ITAB.
+    ENDIF.
+  ENDSELECT.
+  IF SY-SUBRC NE 0.
+    MESSAGE 'Tabla especificada no existe' TYPE 'E'.
+  ENDIF.
+
+  IF NOT P_TABLE CP 'Z*' AND NOT P_TABLE CP 'Y*'.
+    MESSAGE 'No se permiten tablas de sistema' TYPE 'E'.
+  ENDIF.
+
+
+*----------------------------------------------------- PROGRAMA QUE MUESTRA LA GRILLA ----------------------------------------------------------------------*
+
+
+  IF P_TABLE IS NOT INITIAL.
+
+*    IF OREF IS NOT INITIAL.
+*      LEAVE TO SCREEN '1000'.
+*    ENDIF.
+
+    CLEAR L_TABLE.
+    UNASSIGN <T>.
+
+    CREATE DATA L_TABLE TYPE STANDARD TABLE OF (P_TABLE) WITH NON-UNIQUE DEFAULT KEY.
+    ASSIGN L_TABLE->* TO <T>.
+    IF SY-SUBRC EQ 0.
+    ENDIF.
+
+    CLEAR OREF.
+*SELECCIONAN LOS ELEMENTOS DE LA TABLA QUE INGRESA COMO PARÁMETRO
+    CREATE OBJECT OREF
+      EXPORTING
+        DYNNR                       = '1000'                                            "NÚMERO UBICACIÓN DE LA DYNPRO
+        REPID                       = SY-REPID                                          "LLAMANDO AL PROGRAMA
+        SIDE                        = CL_GUI_DOCKING_CONTAINER=>DOCK_AT_BOTTOM          "FUNCIÓN ESTANDAR DEL CONTAINER DE DYNPRO
+        RATIO                       = 80                                                "TAMAÑO DE LA DYNPRO
+      EXCEPTIONS
+        CNTL_ERROR                  = 1                                                 "MENSAJES DE ERROR
+        CNTL_SYSTEM_ERROR           = 2
+        CREATE_ERROR                = 3
+        LIFETIME_ERROR              = 4
+        LIFETIME_DYNPRO_DYNPRO_LINK = 5
+        OTHERS                      = 6.
+
+    IF SY-SUBRC EQ 0.
+    ENDIF.
+
+
+    CLEAR AREF.
+
+*SE CREA OBJETO QUE CONTIENE LOS DATOS DEL OBJETO ANTERIO <OREF>
+    CREATE OBJECT AREF
+      EXPORTING
+        I_PARENT          = OREF
+      EXCEPTIONS
+        ERROR_CNTL_CREATE = 1
+        ERROR_CNTL_INIT   = 2
+        ERROR_CNTL_LINK   = 3
+        ERROR_DP_CREATE   = 4
+        OTHERS            = 5.
+    IF SY-SUBRC EQ 0.
+
+    ENDIF.
+
+
+*SE CREA MÉTODO QUE LLAMA LA ESTRUCTURA DE REFERENCIA DEL DICCIONARIO DE DATOS
+    CALL METHOD AREF->SET_TABLE_FOR_FIRST_DISPLAY
+      EXPORTING
+        I_STRUCTURE_NAME              = P_TABLE
+      CHANGING
+        IT_OUTTAB                     = <T>
+      EXCEPTIONS
+        INVALID_PARAMETER_COMBINATION = 1
+        PROGRAM_ERROR                 = 2
+        TOO_MANY_LINES                = 3
+        OTHERS                        = 4.
+
+    IF SY-SUBRC EQ 0.
+
+    ENDIF.
+
+*    CLEAR p_table.
+
+    CALL METHOD AREF->REFRESH_TABLE_DISPLAY
+      EXCEPTIONS
+        FINISHED = 1
+        OTHERS   = 2.
+    IF SY-SUBRC EQ 0.
+    ENDIF.
+
+    IF AREF IS NOT INITIAL.
+      CLEAR AREF.
+    ENDIF.
+
+  ENDIF.
+
+
+
+
+
+START-OF-SELECTION.
+
+  PERFORM F_OPEN_FILE.
+  PERFORM F_DYNAMIC_TABLE_LOAD.
+
+*--------------------------------------------------------------- INICIO BLOQUE DE PROCESAMIENTO ------------------------------------------------------------*
+
+
+*---------------------------------------------------------------------*
+*       FORMULARIO ABRIR ARCHIVO                                      *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+
+FORM F_OPEN_FILE.
+  REFRESH DATA_ITAB.
+*Verifica si la Variable es Vacía
+  IF P_FILE IS NOT INITIAL.
+    CALL FUNCTION 'WS_UPLOAD'
+      EXPORTING
+        FILENAME            = P_FILE
+        FILETYPE            = 'ASC'
+      TABLES
+        DATA_TAB            = DATA_ITAB
+      EXCEPTIONS
+        CONVERSION_ERROR    = 1
+        FILE_OPEN_ERROR     = 2
+        FILE_READ_ERROR     = 3
+        INVALID_TABLE_WIDTH = 4
+        INVALID_TYPE        = 5
+        NO_BATCH            = 6
+        UNKNOWN_ERROR       = 7
+        OTHERS              = 8.
+    IF SY-SUBRC NE 0.
+      WRITE : ' Error al Abrir el Archivo : ' , P_FILE.
+      STOP.
+    ELSE.
+      "eliminar cabecera
+      IF P_HEAD = 'X'.
+        DELETE DATA_ITAB INDEX 1.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    "f_open_file
+
+
+*---------------------------------------------------------------------*
+*       FORMULARIO CARGAR TABLA DINÁMICA                              *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+FORM F_DYNAMIC_TABLE_LOAD.
+  DATA LV_INDEX TYPE SY-INDEX.
+
+*Se crea un nuevo objeto de tabla, la cual se especifica en el
+*Parámetro de selección de la Tabla
+
+  CREATE DATA DREF TYPE (P_TABLE).
+
+*Declara Variables de referencia
+  ASSIGN DREF->* TO <T>.
+
+*Array
+  LOOP AT DATA_ITAB.
+    REFRESH I_TMP.
+
+*División del archivo cargado, por el delimitador
+*NOTA:
+*-Se permiten formatos .csv y .txt
+*-Se permite cualquier delimitador
+    SPLIT DATA_ITAB  AT DELIM INTO TABLE I_TMP.
+    CLEAR <T>.
+
+
+*---Assign each field of table to field-symbol
+    CLEAR LV_INDEX.
+    LOOP AT FIELDS_ITAB WHERE ROLLNAME <> 'MANDT'.
+      ADD 1 TO LV_INDEX.
+
+      ASSIGN COMPONENT FIELDS_ITAB-FIELDNAME OF STRUCTURE <T> TO <FD>.
+      IF SY-SUBRC NE 0.
+        EXIT.
+      ENDIF.
+      READ TABLE I_TMP  INDEX LV_INDEX..
+      IF SY-SUBRC EQ 0.
+        <FD>  = I_TMP.
+      ENDIF.
+    ENDLOOP.
+
+    MODIFY (P_TABLE) FROM <T>.
+  ENDLOOP.
+    CLEAR sy-tfill.                                               "Limpia los Datos
+
+    IF SY-SUBRC EQ 0.
+
+    DESCRIBE TABLE data_itab LINES sy-tfill.                                         "Almacena la Cantidad de Entradas en la Tabla
+    WRITE :/ 'Numero total de registros de la Tabla', p_table ,' son: ', sy-tfill.   "Imprime el Mensaje y Muestra la Cantidad de Entradas
+    ULINE.
+
+
+*      DESCRIBE TABLE data_itab LINES sy-tfill.                                      "Almacena la Cantidad de Entradas en la Tabla
+*      MESSAGE 'Archivo Cargado con Éxito' TYPE 'I'.
+      ELSE.
+      MESSAGE 'Error al Cargar el Archivo' TYPE 'E'.
+
+    ENDIF.
+
+*    LEAVE TO TRANSACTION 'Z_BIPRUEBA'.
+
+ENDFORM.

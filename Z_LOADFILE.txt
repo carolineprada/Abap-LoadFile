@@ -1,0 +1,40 @@
+*&---------------------------------------------------------------------*
+*& Report Z_LOADFILE
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT Z_LOADFILE.
+
+*//@CPRADA 17.09.19
+
+
+*Se llaman las Tablas, para usar la estructura de la tabla
+TABLES: ZCDSPRG01.
+
+
+*INTERFAZ QUE VERIFICA EL USUARIO
+
+DATA: USUARIO TYPE ZCDSPRG01-UNAME,
+      ROL     TYPE ZCDSPRG01-ROL_GENERAL.
+
+
+*Se llaman los datos
+SELECT SINGLE UNAME, ROL_GENERAL FROM ZCDSPRG01
+  INTO (@USUARIO, @ROL )
+  WHERE uname = @SY-UNAME.
+
+
+
+    IF USUARIO EQ SY-UNAME AND ROL EQ 'ZS_BI_DESA_CDS'.
+
+      "Se debe agregar VIA SELECTION-SCREEN
+      "Programa a Abrir es de este tipo
+      SUBMIT Z_LOADFILE_02 VIA SELECTION-SCREEN.
+
+      ELSEIF USUARIO EQ SY-UNAME AND ROL NE 'ZS_BI_DESA_CDS'.
+
+        SUBMIT Z_LOADFILE_01 VIA SELECTION-SCREEN.
+
+      ELSE.
+        WRITE : / 'NO TIENE PERMISOS, COMUNIQUESE CON EL ADMINISTRADOR EN SISTEMAS (BI)'.
+    ENDIF.
